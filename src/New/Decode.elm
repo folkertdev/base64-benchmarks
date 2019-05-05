@@ -20,6 +20,18 @@ decoder width =
 -- INTERNALS
 
 
+{-| Base64 uses 6 bits per digits (because 2^6 == 64), and can nicely store 4 digits in 24 bits, which are 3 bytes.
+
+The decoding process is thus roughly
+
+  - read a 3-byte chunk
+  - extract the 4 6-bit segments
+  - convert those segments into characters
+
+But the input does not need to have a multiple of 4 characters, so at the end of the string some characters can be omitted.
+This means there may be 2 or 1 byte remaining at the end. We have to cover that case!
+
+-}
 loopHelp : ( Int, String ) -> Decode.Decoder (Decode.Step ( Int, String ) String)
 loopHelp ( remaining, string ) =
     {- Performance Notes
@@ -28,50 +40,23 @@ loopHelp ( remaining, string ) =
        decoding a uint16 here
     -}
     if remaining >= 3 then
-        Decode.map3
-            (\a b c ->
-                case bitsToChars (Bitwise.shiftLeftBy 16 a + Bitwise.shiftLeftBy 8 b + c) 0 of
-                    Nothing ->
-                        Decode.fail
-
-                    Just s ->
-                        Decode.succeed (Decode.Loop ( remaining - 3, string ++ s ))
-            )
+        Decode.map3 (\a b c -> Decode.Loop ( remaining - 3, string ++ bitsToChars (Bitwise.shiftLeftBy 16 a + Bitwise.shiftLeftBy 8 b + c) 0 ))
             Decode.unsignedInt8
             Decode.unsignedInt8
             Decode.unsignedInt8
-            |> Decode.andThen identity
 
     else if remaining == 0 then
         Decode.succeed (Decode.Done string)
 
     else if remaining == 2 then
-        Decode.map2
-            (\a b ->
-                case bitsToChars (Bitwise.shiftLeftBy 16 a + Bitwise.shiftLeftBy 8 b) 1 of
-                    Nothing ->
-                        Decode.fail
-
-                    Just s ->
-                        Decode.succeed (Decode.Done (string ++ s))
-            )
+        Decode.map2 (\a b -> Decode.Done (string ++ bitsToChars (Bitwise.shiftLeftBy 16 a + Bitwise.shiftLeftBy 8 b) 1))
             Decode.unsignedInt8
             Decode.unsignedInt8
-            |> Decode.andThen identity
 
     else
         -- remaining == 1
-        Decode.map
-            (\a ->
-                case bitsToChars (Bitwise.shiftLeftBy 16 a) 2 of
-                    Nothing ->
-                        Decode.fail
-
-                    Just s ->
-                        Decode.succeed (Decode.Done (string ++ s))
-            )
+        Decode.map (\a -> Decode.Done (string ++ bitsToChars (Bitwise.shiftLeftBy 16 a) 2))
             Decode.unsignedInt8
-            |> Decode.andThen identity
 
 
 {-| Mask that can be used to get the lowest 6 bits of a binary number
@@ -87,7 +72,7 @@ lowest6BitsMask =
 (- - - - - -|- - - - - -|- - - - - -|- - - - - -)
 
 -}
-bitsToChars : Int -> Int -> Maybe String
+bitsToChars : Int -> Int -> String
 bitsToChars bits missing =
     {- Performance Notes
 
@@ -111,6 +96,7 @@ bitsToChars bits missing =
         w =
             Bitwise.and bits lowest6BitsMask
 
+        -- any 6-bit number is a valid base64 digit, so this is actually safe
         p =
             unsafeToChar x
 
@@ -123,25 +109,15 @@ bitsToChars bits missing =
         s =
             unsafeToChar w
     in
-    if isValidInt x && isValidInt y then
-        if missing == 2 then
-            Just (String.cons p (String.cons q "=="))
+    case missing of
+        2 ->
+            String.cons p (String.cons q "==")
 
-        else if isValidInt z then
-            if missing == 1 then
-                Just (String.cons p (String.cons q (String.cons r "=")))
+        1 ->
+            String.cons p (String.cons q (String.cons r "="))
 
-            else if isValidInt w then
-                Just (String.cons p (String.cons q (String.cons r (String.fromChar s))))
-
-            else
-                Nothing
-
-        else
-            Nothing
-
-    else
-        Nothing
+        _ ->
+            String.cons p (String.cons q (String.cons r (String.fromChar s)))
 
 
 isValidInt : Int -> Bool

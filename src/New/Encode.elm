@@ -16,6 +16,16 @@ encoder string =
         |> Maybe.map (List.reverse >> Encode.sequence)
 
 
+{-| Big picture:
+
+  - read 4 base64 characters
+  - convert them to 3 bytes (24 bits)
+  - encode these bytes
+
+@TODO this means the input must have a multiple of 4 # of characters. Is that too strict?
+can we insert padding here?
+
+-}
 encodeChunks : String -> List Encoder -> Maybe (List Encoder)
 encodeChunks input accum =
     {- Performance Note
@@ -72,7 +82,9 @@ encodeCharacters a b c d =
                                 Bitwise.or (Bitwise.shiftLeftBy 18 n1) (Bitwise.shiftLeftBy 12 n2)
 
                             b1 =
-                                Bitwise.and (Bitwise.shiftRightBy 16 n) 0xFF
+                                -- masking with 0xFF is not needed, Encode.unsignedInt8 ignores higher bits
+                                -- Bitwise.and (Bitwise.shiftRightBy 16 n) 0xFF
+                                Bitwise.shiftRightBy 16 n
                         in
                         Just (Encode.unsignedInt8 b1)
 
@@ -106,7 +118,9 @@ encodeCharacters a b c d =
                             Bitwise.or (Bitwise.or (Bitwise.shiftLeftBy 18 n1) (Bitwise.shiftLeftBy 12 n2)) (Bitwise.or (Bitwise.shiftLeftBy 6 n3) n4)
 
                         b3 =
-                            Bitwise.and n 0xFF
+                            -- Encode.unsignedInt8 ignores higher bits
+                            -- Bitwise.and n 0xFF
+                            n
 
                         combined =
                             Bitwise.shiftRightBy 8 n
